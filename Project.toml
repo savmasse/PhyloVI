@@ -1,0 +1,7 @@
+name = "PhyloVI"
+uuid = "ce70bd92-f573-11e9-3def-43cd9804f968"
+authors = ["savmasse <sam.vanmassenhove@ugent.be>"]
+version = "0.1.0"
+
+[deps]
+Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
