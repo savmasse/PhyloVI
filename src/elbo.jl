@@ -13,38 +13,46 @@ ELBO() = ELBO(10)
 function (elbo::ELBO)(q::M, model::D, data::AbstractVector{T}) where {M<:MeanField, D<:Distribution, T<:Real}
     r = 0.0
     N = elbo.n_samples
+    n = M(length(q.dists))
 
     for i in 1:N
-        ζ = rand(q)
-        θ = model_transform(model)(ζ)
+        η = rand(n)                         # Standardized parameters
+        ζ = inv_elliptical(q, η)            # Real space parameters
+        transform = model_transform(model)
+        θ = transform(ζ)                    # Parameter space
         m = D(θ)
-        r += logprior(m) + loglikelihood(m, data)
+        r += logprior(m) + loglikelihood(m, data) + TransformVariables.transform_and_logjac(transform, ζ)[2]
     end
+
     return r/N - entropy(q)
 end
 
 function grad_elbo(q::M, model::D, data::AbstractVector{T}) where {M<:MeanField, D<:Distribution, T<:Real}
 
-    # Get variational parameters
+    # Get variational parameters (real space)
     p = [i for i in Iterators.flatten(collect(params(q)))]
+    p_real = sample_invtransform(q)(params(q))
+
+    # Create standard normal variational distribution
+    n = M(length(q.dists))
 
     function f(x)
         # Sample the variational distribution
-        Q = M(x)
-        ζ = rand(Q)
-        # Transform sampled parameters to parameter space
+        p = sample_transform(q)(x)          # Variational params in parameter space
+        Q = M(p)
+        η = rand(n)                         # Sample standard normal
+        ζ = inv_elliptical(Q, η)            # Transform to real space
         transform = model_transform(model)
-        θ = transform(ζ)
+        θ = transform(ζ)                    # Transform to parameter space
         m = D(θ)
-        # Calculate the ELBO
-        return logprior(m) + loglikelihood(m, data) +  TransformVariables.transform_and_logjac(transform, ζ)[2] - entropy(q)
+        return logprior(m) + loglikelihood(m, data) + TransformVariables.transform_and_logjac(transform, ζ)[2] - entropy(Q)
     end
     g(x) = ForwardDiff.gradient(f, x)
 
-    return g(p)
+    return g(p_real)
 end
 
-function calc_grad_elbo(q::M, model::D, data::AbstractVector{T}, N::Int=1) where {M<:MeanField, D<:Distribution, T<:Real}
+function calc_grad_elbo(q::M, model::D, data::AbstractVector{T}, N::Int=10) where {M<:MeanField, D<:Distribution, T<:Real}
 
     n = dimension(sample_transform(q))
     r = zeros(T, n)

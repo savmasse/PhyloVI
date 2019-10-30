@@ -1,3 +1,5 @@
+using Distributions
+
 #===============================================================================
             Mean field variational family struct and functions
 ===============================================================================#
@@ -44,7 +46,10 @@ function MeanFieldGaussian(n::NamedTuple)
     dists = [Normal(μ[i], σ[i]) for i in 1:N]
     return MeanFieldGaussian(dists)
 end
-
+function MeanFieldGaussian(N::Int) # Create standard normal
+    dists::Vector{Normal} = [Normal() for i in 1:N]
+    return MeanFieldGaussian(dists)
+end
 function sample_transform(q::MeanFieldGaussian)
     N = length(q.dists)
     t = as((μ = as(Array, asℝ, N), σ = as(Array, asℝ₊, N)))
@@ -72,8 +77,8 @@ end
 
 function params(q::MeanFieldGaussian)
     n = length(q.dists)
-    μ = Vector{Float64}(undef, n)
-    σ = Vector{Float64}(undef, n)
+    μ = Vector{Real}(undef, n)
+    σ = Vector{Real}(undef, n)
     for i in 1:n
         m, s = Distributions.params(q.dists[i])
         μ[i] = m
@@ -81,6 +86,25 @@ function params(q::MeanFieldGaussian)
     end
     return (μ = μ, σ = σ)
 end
+
+function elliptical_standardization(q::MeanFieldGaussian, ζ::AbstractVector{T}) where T<:Real
+    # Get parameters (with log-transformed σ)
+    μ, σ = params(q)
+
+    # Parameter can be zero, so adjust with ϵ
+    σ .+= ϵ
+    
+    # Return standardized parameters
+    η = (1.0 ./ σ) .* (ζ .- μ)
+    return η
+end
+
+function inv_elliptical(q::MeanFieldGaussian, η::AbstractVector{T}) where T<:Real
+    μ, σ = params(q)
+    ζ::Vector{T} = η .* σ .+ μ
+    return ζ
+end
+
 
 #===============================================================================
                 Full rank variational family implementations
