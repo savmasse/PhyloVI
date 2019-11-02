@@ -1,5 +1,7 @@
 using Distributions
 using StatsBase
+using ForwardDiff
+using TransformVariables
 
 #===============================================================================
                             Main file for testing
@@ -43,7 +45,7 @@ end
 m_true = -10
 s_true = 3
 true_posterior = Normal(m_true, s_true)
-data = rand(true_posterior, 1000)
+data = rand(true_posterior, 100)
 
 # Create a model
 model = SimpleModel(Normal(m_true, s_true))
@@ -54,19 +56,20 @@ q = MeanFieldGaussian(dists)
 
 # Test ELBO calculations
 elbo = ELBO(100)
-elbo(q, model, data)
-grad_elbo(q, model, data)
-calc_grad_elbo(q, model, data)
+# @btime $elbo($q, $model, $data)
+# @btime grad_elbo($q, $model, $data)
+# @btime calc_grad_elbo($q, $model, $data, 1)
 
 # Try ADVI
-advi = ADVI(10, 1000)
-res = advi(q, model, data, [[1e-2, 1e-3], [1e-3, 1e-3]])
-print(res)
+advi = ADVI(10, 500)
+res = advi(elbo, q, model, data, 1.0, 0.5, 1, 10)
+println(res)
 
 # Get the inferred parameters
 p = params(res)[:μ]
-p = model_invtransform(model)((μ=p[1], σ=p[2]))
+p = model_transform(model)(p)
+println(p)
 
-using StatsPlots
-using Plots
-histogram(data, bins=20, normalize=true)
+# using StatsPlots
+# using Plots
+# histogram(data, bins=20, normalize=true)

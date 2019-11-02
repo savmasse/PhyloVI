@@ -1,4 +1,5 @@
 using Distributions
+using BenchmarkTools
 
 #===============================================================================
             Mean field variational family struct and functions
@@ -90,10 +91,8 @@ end
 function elliptical_standardization(q::MeanFieldGaussian, ζ::AbstractVector{T}) where T<:Real
     # Get parameters (with log-transformed σ)
     μ, σ = params(q)
-
     # Parameter can be zero, so adjust with ϵ
-    σ .+= ϵ
-    
+    #σ .+= ϵ
     # Return standardized parameters
     η = (1.0 ./ σ) .* (ζ .- μ)
     return η
@@ -115,18 +114,18 @@ mutable struct FullRankGaussian <: AbstractVariationalFamily
 end
 
 
+
 #===============================================================================
                         Main program for testing
 ===============================================================================#
 
-
-q = MeanFieldGaussian([Normal(0., 1. *i) for i in 1:100])
-
-function loop()
-    q = MeanFieldGaussian([Normal() for i in 1:100])
-    @btime d = [i.σ for i in q.dists]
-end
-
-@btime entropy($q)
-@btime grad_entropy($q)
-@btime params($q)
+# q = MeanFieldGaussian([Normal(0., 1. *i) for i in 1:100])
+#
+# function loop()
+#     q = MeanFieldGaussian([Normal() for i in 1:100])
+#     @btime d = [i.σ for i in q.dists]
+# end
+#
+# @btime entropy($q)
+# @btime grad_entropy($q)
+# @btime params($q)

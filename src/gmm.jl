@@ -71,6 +71,7 @@ function (elbo::ELBO)(q::M, model::GaussianMixtureModel{T}, data::AbstractVector
     for i in 1:N
         η = rand(n)                         # Standardized parameters
         ζ = inv_elliptical(q, η)            # Real space parameters
+        ζ[findall(iszero, ζ)] .= eps()
         transform = model_transform(model)
         θ = transform(ζ)                    # Parameter
 
@@ -80,12 +81,22 @@ function (elbo::ELBO)(q::M, model::GaussianMixtureModel{T}, data::AbstractVector
         for i in 1:N
             ϕ[i,:] ./= sum(ϕ[i,:])
         end
-        ζ = model_invtransform(model)(θ)
+        ϕ .= max.(ϕ, eps())
+        ϕ .= min.(ϕ, 1 - eps())
+        # #println("Iteration ", i, ": ")
+        # #println(θ[:ϕ])
+        # try
+        #     ζ = model_invtransform(model)(θ)
+        # catch e
+        #     println(θ)
+        # end
+        # ζ[findall(iszero, ζ)] .= eps()
+
         m = GaussianMixtureModel{T}(θ)
         r += logprior(m) + loglikelihood(m, data) + TransformVariables.transform_and_logjac(transform, ζ)[2]
     end
 
-    return r/N + entropy(q)
+    return r/N + entropy(n)
 end
 
 function grad_elbo(q::M, model::GaussianMixtureModel{T}, data::AbstractVector{T}) where {M<:MeanField, T<:Real}
@@ -103,6 +114,7 @@ function grad_elbo(q::M, model::GaussianMixtureModel{T}, data::AbstractVector{T}
         Q = M(p)
         η = rand(n)                         # Sample standard normal
         ζ = inv_elliptical(Q, η)            # Transform to real space
+        ζ[findall(iszero, ζ)] .= eps()
         transform = model_transform(model)
         θ = transform(ζ)                    # Transform to parameter space
 
@@ -112,15 +124,84 @@ function grad_elbo(q::M, model::GaussianMixtureModel{T}, data::AbstractVector{T}
         for i in 1:N
             ϕ[i,:] ./= sum(ϕ[i,:])
         end
-        ζ = model_invtransform(model)(θ)
+        # ϕ .= max.(ϕ, eps())
+        # ϕ .= min.(ϕ, 1 - eps())
+        # ζ = model_invtransform(model)(θ)
+        # ζ[findall(iszero, ζ)] .= eps()
 
         m = GaussianMixtureModel{T}(θ)
-        return logprior(m) + loglikelihood(m, data) + TransformVariables.transform_and_logjac(transform, ζ)[2] + entropy(Q)
+        return logprior(m) + loglikelihood(m, data) + TransformVariables.transform_and_logjac(transform, ζ)[2] + entropy(n)
     end
     g(x) = ForwardDiff.gradient(f, x)
 
     return g(p_real)
 end
+
+
+function (advi::ADVI)(elbo::ELBO, q::MeanFieldGaussian, model::D, data::AbstractVector{T}, η::Float64=1.0, α::Float64=.1) where {D<:Distribution, T<:Real}
+
+    # Transform parameters to real space
+    ζ = sample_invtransform(q)(params(q))
+    N = Int(dimension(sample_transform(q)))
+
+    # Setup some parameters
+    prev = 0
+    counter = 0
+    patience = 0
+    q_best = q
+    Q = q
+    s = zeros(N)
+    PATIENCE = 5        # TODO: this should not be hardcoded!
+    VERBOSE = 1         # TODO: this should not be hardcoded!
+
+    # Enter convergence loop
+    for i in 1:advi.max_iter
+
+        # Check if should exit loop
+        if patience >= PATIENCE
+            break
+        end
+        counter += 1
+
+        # Calculate the ELBO
+        curr = elbo(Q, model, data)
+        if VERBOSE == 1; println("Iteration ", i, ": ", curr); end
+
+        # Calculate the gradient and update parameters
+        g = calc_grad_elbo(Q, model, data, advi.n_samples)
+        δ = calc_step(i, η, α, g, s)
+        ζ .+= δ .* g
+        ζ[findall(iszero, ζ)] .= eps()
+        μ_new, σ_new = sample_transform(q)(ζ)
+
+        # Normalize the categorical variables
+        L = 100
+        for i in 5:5+L-1
+            n = (μ_new[i] + μ_new[i+L])
+            μ_new[i] /= n
+            μ_new[i+L] /= n
+        end
+        μ_new .= max.(μ_new, eps())
+        μ_new .= min.(μ_new, 1 - eps())
+        σ_new .= max.(σ_new, eps())
+
+        # Check if we should stop
+        if curr < prev
+            patience += 1
+        else
+            patience = 0
+            q_best = MeanFieldGaussian((μ=μ_new, σ=σ_new))
+        end
+        prev = curr
+
+        # Update variational parameters
+        Q = MeanFieldGaussian((μ=μ_new, σ=σ_new))
+    end
+
+    println("Finished ADVI after ", counter, " iterations.")
+    return q_best
+end
+
 
 #===============================================================================
                         Main program for testing GMM
@@ -134,24 +215,27 @@ n = 50
 N = K*n
 
 # Generate data and set labels
-ϕ = zeros(N, K)             # True class labels
+ϕ_true = zeros(N, K)             # True class labels
 data = Vector{Float64}()
 for i in 1:K
-    ϕ[(i-1)*n+1:i*n, i] = ones(n)
+    ϕ_true[(i-1)*n+1:i*n, i] = ones(n)
     d = rand(Normal(μ[i], σ[i]), n)
     append!(data, d)
 end
 
 # Create a GMM and variational distribution
-model = GaussianMixtureModel(μ, σ, ϕ)
-#ϕ_init = transpose(rand(Dirichlet(rand(2)), N))
+model = GaussianMixtureModel(μ, σ, ϕ_true)
+ϕ_init = transpose(rand(Dirichlet(rand(2)), N))
 q = MeanFieldGaussian([Normal(2., 1.) for i in 1:(2*N+2*K)])
+p = params(q)
+p.μ[2*K+1:end] = ϕ_init
+init = [p.μ[1:(2*K)]..., reshape(ϕ_init, 200)..., 2 .*ones(2K + 2N)...]
 
 # Create ELBO and ADVI objects
 elbo = ELBO(50)
-advi = ADVI(1, 100)
+advi = ADVI(10, 100)
 
-res = advi(q, model, data, [rand(204), rand(204)])
+res = advi(elbo, q, model, data, .1, 0.9)
 p = params(res)[:μ]
 
 θ = model_transform(model)(p)
@@ -160,4 +244,4 @@ println(θ[:ϕ])
 for i in 1:N
     ϕ[i,:] ./= sum(ϕ[i,:])
 end
-println(ϕ)
+display(ϕ)

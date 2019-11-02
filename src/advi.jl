@@ -10,59 +10,65 @@ mutable struct ADVI
     max_iter::Int
 end
 
-function (advi::ADVI)(q::M, model::D, data::AbstractVector{T}, δ=[1e-3, 1e-3]) where {M<:MeanField, D<:Distribution, T<:Real}
+function (advi::ADVI)(elbo::ELBO, q::M, model::D, data::AbstractVector{T}, η::Float64=1.0, α::Float64=.1,
+    verbose=0, patience=5) where {M<:MeanField, D<:Distribution, T<:Real}
 
-    # Setup/preprocessing
     # Transform parameters to real space
-    θ = sample_invtransform(q)(params(q))
-    N = Int(dimension(sample_transform(q))/2)
-    μ = θ[1:N]
-    ω = θ[N+1:end]
+    ζ = sample_invtransform(q)(params(q))
+    N = Int(dimension(sample_transform(q)))
 
-    prev = 0
-    elbo = ELBO(100)
+    # Setup some parameters
+    prev = -Inf
+    best_elbo = -Inf
     counter = 0
-    patience = 0
+    p = 0
     q_best = q
     Q = q
+    s = zeros(N)
 
     # Enter convergence loop
     for i in 1:advi.max_iter
 
-        if patience >= 3
+        # Check if should exit loop
+        if p >= patience
             break
         end
-
         counter += 1
 
+        # Calculate the ELBO
         curr = elbo(Q, model, data)
-        println("ELBO: ", curr)
+        if verbose > 1; println("Iteration ", i, ": ", curr); end
 
-        # Calculate the gradient
-        c = calc_grad_elbo(Q, model, data, advi.n_samples)
-        μ₀ = c[1:N]
-        ω₀ = c[N+1:end]
-
-        # Update the parameters (this is still real space)
-        μ .+= δ[1].*μ₀
-        ω .+= δ[2].*ω₀
-
-        # Transform back to parameter space
-        ζ = [μ..., ω...]
+        # Calculate the gradient and update parameters
+        g = calc_grad_elbo(Q, model, data, advi.n_samples)
+        δ = calc_step(i, η, α, g, s)
+        ζ .+= δ .* g
         μ_new, σ_new = sample_transform(q)(ζ)
 
-        if curr < prev
-            patience += 1
+        # Check if we should stop
+        if curr < best_elbo
+            p += 1
         else
-            patience = 0
+            p = 0
             q_best = M((μ=μ_new, σ=σ_new))
+            best_elbo = curr
         end
         prev = curr
 
+        # Update the parameters of the variational distribution
         Q = M((μ=μ_new, σ=σ_new))
     end
 
-    println("Finished ADVI after ", counter, " iterations.")
-    println("Final ELBO: ", elbo(q_best, model, data))
+    if verbose > 0
+        println("Finished ADVI after ", counter, " iterations.")
+        println("Final ELBO: ", best_elbo)
+    end
     return q_best
+end
+
+function calc_step(i::Int, η::Float64, α::Float64, g::AbstractVector{T}, s::AbstractVector{T}) where T<:Real
+    ϵ = eps()
+    s = (i == 1) ? g.^2 : α^2 .* g.^2 .+ (1-α) .* s
+    δ_new = η .* i^(-1/2 + ϵ) ./ (1.0 .+ s.^(1/2))
+    return δ_new
 end
