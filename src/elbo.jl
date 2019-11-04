@@ -10,7 +10,7 @@ end
 ELBO() = ELBO(10)
 
 # Calculate the ELBO of a certain model and variational distribution
-function (elbo::ELBO)(q::M, model::D, data::AbstractVector{T}) where {M<:MeanField, D<:Distribution, T<:Real}
+function (elbo::ELBO)(q::M, model::D, data::AbstractArray{T}) where {M<:MeanField, D<:Distribution, T<:Real}
     r = 0.0
     N = elbo.n_samples
     n = M(length(q.dists))
@@ -27,10 +27,9 @@ function (elbo::ELBO)(q::M, model::D, data::AbstractVector{T}) where {M<:MeanFie
     return r/N - entropy(q)
 end
 
-function grad_elbo(q::M, model::D, data::AbstractVector{T}) where {M<:MeanField, D<:Distribution, T<:Real}
+function grad_elbo(q::M, model::D, data::AbstractArray{T}) where {M<:MeanField, D<:Distribution, T<:Real}
 
     # Get variational parameters (real space)
-    p = [i for i in Iterators.flatten(collect(params(q)))]
     p_real = sample_invtransform(q)(params(q))
 
     # Create standard normal variational distribution
@@ -52,7 +51,7 @@ function grad_elbo(q::M, model::D, data::AbstractVector{T}) where {M<:MeanField,
     return g(p_real)
 end
 
-function calc_grad_elbo(q::M, model::D, data::AbstractVector{T}, N::Int=10) where {M<:MeanField, D<:Distribution, T<:Real}
+function calc_grad_elbo(q::M, model::D, data::AbstractArray{T}, N::Int=10) where {M<:MeanField, D<:Distribution, T<:Real}
 
     n = dimension(sample_transform(q))
     r = zeros(T, n)

@@ -2,23 +2,50 @@
 abstract type VariationalAlgorithm end
 
 #===============================================================================
+                            ADVI optimization logger
+===============================================================================#
+
+mutable struct VarInfLogger
+    θ::Vector           # Parameters
+    ∇::Vector           # Gradients in real space
+    objective::Vector   # Variational objective
+end
+
+function update_logger!(logger::VarInfLogger, θ, ∇, objective)
+    # Add new info to the logger
+    push!(logger.θ, θ)
+    push!(logger.∇, ∇)
+    push!(logger.objective, objective)
+end
+
+function display(logger::VarInfLogger)
+    # Show logger info in text in nice overview: probably a dataframe
+end
+
+function plot(logger::VarInfLogger)
+    # Plot the parameters of the logger
+end
+
+#===============================================================================
                     ADVI type definition and functions
 ===============================================================================#
 
 mutable struct ADVI
-    n_samples::Int  # Amount of Monte Carlo samples in gradient computation
-    max_iter::Int
+    n_samples::Int          # Amount of Monte Carlo samples in gradient computation
+    max_iter::Int           # Maximum amount of iterations in optimization
+    verbose::Int            # Degree of output text during optimization
+    patience::Int           # Tolerance for non-improving iterations
+    logger::VarInfLogger    # Logger for optimization process
 end
 
-function (advi::ADVI)(elbo::ELBO, q::M, model::D, data::AbstractVector{T}, η::Float64=1.0, α::Float64=.1,
-    verbose=0, patience=5) where {M<:MeanField, D<:Distribution, T<:Real}
+function (advi::ADVI)(elbo::ELBO, q::M, model::D, data::AbstractArray{T}, η::Float64=1.0, α::Float64=.1) where {M<:MeanField, D<:Distribution, T<:Real}
 
     # Transform parameters to real space
     ζ = sample_invtransform(q)(params(q))
     N = Int(dimension(sample_transform(q)))
 
     # Setup some parameters
-    prev = -Inf
+    prev_elbo = -Inf
     best_elbo = -Inf
     counter = 0
     p = 0
@@ -30,14 +57,14 @@ function (advi::ADVI)(elbo::ELBO, q::M, model::D, data::AbstractVector{T}, η::F
     for i in 1:advi.max_iter
 
         # Check if should exit loop
-        if p >= patience
+        if p >= advi.patience
             break
         end
         counter += 1
 
         # Calculate the ELBO
-        curr = elbo(Q, model, data)
-        if verbose > 1; println("Iteration ", i, ": ", curr); end
+        curr_elbo = elbo(Q, model, data)
+        if advi.verbose > 1; println("Iteration ", i, ": ", curr_elbo); end
 
         # Calculate the gradient and update parameters
         g = calc_grad_elbo(Q, model, data, advi.n_samples)
@@ -46,20 +73,23 @@ function (advi::ADVI)(elbo::ELBO, q::M, model::D, data::AbstractVector{T}, η::F
         μ_new, σ_new = sample_transform(q)(ζ)
 
         # Check if we should stop
-        if curr < best_elbo
+        if curr_elbo < best_elbo
             p += 1
         else
             p = 0
             q_best = M((μ=μ_new, σ=σ_new))
-            best_elbo = curr
+            best_elbo = curr_elbo
         end
-        prev = curr
+        prev_elbo = curr_elbo
 
         # Update the parameters of the variational distribution
         Q = M((μ=μ_new, σ=σ_new))
+
+        # Update the logger
+        update_logger!(advi.logger, [μ_new..., σ_new...], g, curr_elbo)
     end
 
-    if verbose > 0
+    if advi.verbose > 0
         println("Finished ADVI after ", counter, " iterations.")
         println("Final ELBO: ", best_elbo)
     end

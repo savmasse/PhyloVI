@@ -42,8 +42,8 @@ function model_invtransform(d::SimpleModel)
 end
 
 # Generate some normally distributed data
-m_true = -10
-s_true = 3
+m_true = 10
+s_true = 2
 true_posterior = Normal(m_true, s_true)
 data = rand(true_posterior, 100)
 
@@ -54,22 +54,55 @@ model = SimpleModel(Normal(m_true, s_true))
 dists = [Normal(1., 1.1) for i in 1:2]
 q = MeanFieldGaussian(dists)
 
-# Test ELBO calculations
+# Do optimization
 elbo = ELBO(100)
-# @btime $elbo($q, $model, $data)
-# @btime grad_elbo($q, $model, $data)
-# @btime calc_grad_elbo($q, $model, $data, 1)
-
-# Try ADVI
-advi = ADVI(10, 500)
-res = advi(elbo, q, model, data, 1.0, 0.5, 1, 10)
+advi = ADVI(10, 100, 1, 5, VarInfLogger(Vector(), Vector(), Vector()))
+res = advi(elbo, q, model, data, 1., 0.9)
 println(res)
 
 # Get the inferred parameters
-p = params(res)[:μ]
-p = model_transform(model)(p)
-println(p)
+pars = params(res)[:μ]
+pars = model_transform(model)(pars)
+println(pars)
 
-# using StatsPlots
-# using Plots
-# histogram(data, bins=20, normalize=true)
+# Experiment with plotting the logged values
+using StatsPlots
+using Plots
+using LaTeXStrings
+using DataFrames
+
+θ = advi.logger.θ
+θ = Array{Float64}(undef, size(θ)[1], length(θ[1]))
+∇ = advi.logger.∇
+∇ = Array{Float64}(undef, size(∇)[1], length(∇[1]))
+# θ[:, 1] = [advi.logger.θ[i][1] for i in 1:size(θ)[1]]
+# θ[:, 2] = [advi.logger.θ[i][2] for i in 1:size(θ)[1]]
+# θ[:, 3] = [advi.logger.θ[i][3] for i in 1:size(θ)[1]]
+# θ[:, 4] = [advi.logger.θ[i][4] for i in 1:size(θ)[1]]
+# Plots.plot(advi.logger.objective)
+
+for j in 1:4
+    θ[:, j] = [advi.logger.θ[i][j] for i in 1:size(θ)[1]]
+    ∇[:, j] = [advi.logger.∇[i][j] for i in 1:size(∇)[1]]
+end
+
+# ∇[:, 1] = [advi.logger.∇[i][1] for i in 1:size(∇)[1]]
+# ∇[:, 2] = [advi.logger.∇[i][2] for i in 1:size(∇)[1]]
+# ∇[:, 3] = [advi.logger.∇[i][3] for i in 1:size(∇)[1]]
+# ∇[:, 4] = [advi.logger.∇[i][4] for i in 1:size(∇)[1]]
+
+y = model_transform(model)(rand(2))
+d = DataFrame(θ)
+# for i in 1:4
+#     insert!(d, 4+i, ∇[:, i], Symbol(i))
+# end
+insert!(d, 5, advi.logger.objective, Symbol(9))
+
+p = []
+labels=["\\mu_mean", "\\sigma_mean", "\\mu_stdev", "\\sigma_stdev", "\\delta\\mu_mean", "\\delta\\sigma_mean", "\\delta\\mu_stdev", "\\delta\\sigma_stdev", "ELBO"]
+for i in 1:2
+    push!(p, Plots.plot(d[i], title=labels[i], legend=:none, ribbon=d[i+2]))
+end
+push!(p, Plots.plot(d[5], title=labels[9], legend=:none))
+
+Plots.plot(p...)
