@@ -1,5 +1,6 @@
 using Distributions
 using BenchmarkTools
+using TransformVariables
 
 #===============================================================================
             Mean field variational family struct and functions
@@ -76,7 +77,7 @@ function grad_entropy(q::MeanFieldGaussian)
     return r
 end
 
-function params(q::MeanFieldGaussian)
+function Distributions.params(q::MeanFieldGaussian)
     n = length(q.dists)
     μ = Vector{Real}(undef, n)
     σ = Vector{Real}(undef, n)
@@ -91,15 +92,13 @@ end
 function elliptical_standardization(q::MeanFieldGaussian, ζ::AbstractVector{T}) where T<:Real
     # Get parameters (with log-transformed σ)
     μ, σ = params(q)
-    # Parameter can be zero, so adjust with ϵ
-    #σ .+= ϵ
     # Return standardized parameters
     η = (1.0 ./ σ) .* (ζ .- μ)
     return η
 end
 
 function inv_elliptical(q::MeanFieldGaussian, η::AbstractVector{T}) where T<:Real
-    μ, σ = params(q)
+    μ, σ = Distributions.params(q)
     ζ::Vector{T} = η .* σ .+ μ
     return ζ
 end
@@ -109,23 +108,6 @@ end
                 Full rank variational family implementations
 ===============================================================================#
 
-mutable struct FullRankGaussian <: AbstractVariationalFamily
-    dist::MvNormal
+mutable struct FullRankGaussian <: MeanField
+    dists::MvNormal
 end
-
-
-
-#===============================================================================
-                        Main program for testing
-===============================================================================#
-
-# q = MeanFieldGaussian([Normal(0., 1. *i) for i in 1:100])
-#
-# function loop()
-#     q = MeanFieldGaussian([Normal() for i in 1:100])
-#     @btime d = [i.σ for i in q.dists]
-# end
-#
-# @btime entropy($q)
-# @btime grad_entropy($q)
-# @btime params($q)

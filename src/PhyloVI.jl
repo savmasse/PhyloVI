@@ -4,6 +4,9 @@ module PhyloVI
     using LinearAlgebra
     using TransformVariables
     using Parameters
+    using DataFrames
+    using ForwardDiff
+    using CSV
 
     include("meanfield.jl")
     include("elbo.jl")
