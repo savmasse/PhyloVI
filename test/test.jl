@@ -1,149 +1,83 @@
-using Distributions
-using StatsBase
-using ForwardDiff
-using TransformVariables
 
-#===============================================================================
-                            Main file for testing
-===============================================================================#
+using Beluga, CSV, DataFrames, Parameters
+using Measures, IterTools, BenchmarkTools
 
-mutable struct SimpleModel <: ContinuousUnivariateDistribution
-    dist::Normal
-end
-function SimpleModel(n::NamedTuple)
-    n = Normal(n[:μ][1], n[:σ][1])
-    return SimpleModel(n)
-end
-function SimpleModel(x::AbstractVector{T}) where T<:Real
-    n = Normal(x[1], x[2])
-    return SimpleModel(n)
-end
-function Base.rand(d::SimpleModel, N::Int)
-    return rand(d.dist, N)
-end
-Base.rand(d::SimpleModel) = rand(d, 1)
-function Distributions.params(d::SimpleModel)
-    μ, σ = Distributions.params(d.dist)
-    return (μ = μ, σ = σ)
-end
-Distributions.loglikelihood(d::SimpleModel, x::AbstractVector) = loglikelihood(d.dist, x);
-logprior(d::SimpleModel)= 0;
-grad_logprior(d::SimpleModel, p::AbstractVector) = [0., 0.]::Vector{Float64};
+using PhyloVI
 
-function grad_loglikelihood(d::SimpleModel, p::AbstractVector{T}, data::AbstractVector{T}) where T<:Real
-    # TODO: Maybe implement this...
-end
+include("../src/vimodel.jl")
+include("../src/phylomodel.jl")
+include("../src/meanfield.jl")
+include("../src/elbo.jl")
+include("../src/logger.jl")
+include("../src/advi.jl")
+include("../src/wgdbelugamodel.jl")
 
-Base.length(d::SimpleModel) = length(d.dist)
+# Set seed for reproducibility
+Random.seed!(1)
 
-function model_transform(d::SimpleModel)
-    t = as((μ = asℝ, σ = asℝ₊))
-    return t
-end
-function model_invtransform(d::SimpleModel)
-    t = model_transform(d)
-    return inverse(t)
-end
+# get some data
+datadir = "./PhyloVI/data/"
+tree = open(joinpath(datadir, "species_trees/plants2.nw"), "r") do f ; readline(f); end
+df = CSV.read(joinpath(datadir, "branch_wise/1.counts.csv"), delim=",")
 
-# Generate some normally distributed data
-m_true = 20
-s_true = exp(1)
-true_posterior = Normal(m_true, s_true)
-data = rand(true_posterior, 100)
+# Init model
+λ, μ, η = 1., 1., 0.5
+model, profile = DLWGD(tree, df, λ, μ, η)
 
-# Create a model
-model = SimpleModel(Normal(m_true, s_true))
+# insertwgd!(model, model[6], 0.05, 0.25)
+# extend!(profile, 6);
 
-# Create a variational distribution
-dists = [Normal(1., 1.1) for i in 1:2]
-q = MeanFieldGaussian(dists)
+# Simulate some more data
+rr = CSV.read(".\\PhyloVI\\data\\branch_wise\\1.rates.csv", delim=",")
+η = 0.85
+x = [rr[:λ]..., rr[:μ]..., η]
+model = model(x)
+df = rand(model, 1000)
+model, profile = DLWGD(tree, df, λ, μ, η)
 
-# Do optimization
-elbo = ELBO(100)
-r = repeat([Float64[]], 9)
-advi = ADVI(10, 500, 1, 200, VarInfLogger(Vector(), Vector(), Vector(), DataFrame(r)))
-res = advi(elbo, q, model, data, .3, 0.1)
-println(res)
+data = profile
+prior = IidRevJumpPrior(
+    Σ₀=[0.5 0.45 ; 0.45 0.5],
+    X₀=MvNormal(log.(ones(2)), [0.5 0.45 ; 0.45 0.5]),
+    πK=DiscreteUniform(0,20),
+    πq=Beta(1,1),
+    πη=Beta(3,1),
+    Tl=treelength(model))
 
-# Get the inferred parameters
-pars = Distributions.params(res)[:μ]
-pars = model_transform(model)(pars)
-println(pars)
+# Create a Beluga model with a WGD
+bm = WGDBelugaModel(prior, model)
+N = length(Beluga.getwgds(model))
+L = length(model) - 2N
+T = 2*L + N + 1         # (L x λ, L x μ, N x q, and 1 x η)
+xn = [Normal(log(1), 0.05) for _ in 1:T-1]
+push!(xn, Normal(1., .05))
+q = MeanFieldGaussian(xn)
 
-# Experiment with plotting the logged values
-using StatsPlots
-using Plots
-using LaTeXStrings
-using DataFrames
+# Run ADVI algorithm
+elbo = ELBO(1)
+advi = ADVI(1, 500, 2, 200, 1e-4, VarInfLogger(N, L))
+@time Q = optimize(advi, elbo, q, bm, data, 0.1, 0.05)
+# Save VI values to csv
+CSV.write("./results/simulation_results_vi_α=0.9_η=0.1.csv", advi.logger.df)
 
-df = advi.logger.df
-Plots.plot(df[end], legend=:none, title="ELBO")
-Plots.plot(df[1], legend=:none)
+# Compare with simulated values
+r = Distributions.params(Q)[:μ]
+res = model_transform(bm)(r)
+rr = CSV.read(".\\PhyloVI\\data\\branch_wise\\1.rates.csv", delim=",")
+d = DataFrame((λ_truth=rr[:λ], λ=res[:λ], μ_truth=rr[:μ], μ=res[:μ]))
 
-using Optim
+# Now run the MCMC equivalent on the same data
+ch = RevJumpChain(data=data, model=deepcopy(model), prior=prior)
+init!(ch)
+rjmcmc!(ch, 100, show=10, trace=1)
 
-function set_params!(q::MeanFieldGaussian, x)
-    μ = x[:μ]
-    σ = x[:σ]
-    for i in 1:length(q)
-        q.dists[i] = Normal(μ[i], σ[i])
-    end
-end
+# Save MCMC values to csv
+CSV.write("./results/simulation_results_mcmc_α=0.9_η=0.1.csv", ch.trace)
 
-function set_params!(q::MeanFieldGaussian, x::AbstractVector)
-    N = length(q)
-    for i in 1:N
-        q.dists[i] = Normal(x[i], x[N+i])
-    end
-end
+# Plot the logs and compare to the true values
+plot_logs(advi.logger, q, bm, 5, L, N, T, false)
+# savefig("beluga_simulation_advi_2.pdf")
 
-function o()
-
-    Q = MeanFieldGaussian(2)
-    elbo = ELBO(100)
-    model = SimpleModel(Normal(m_true, s_true))
-
-
-    function calc_grad!(G, x)
-
-        # for i in eachindex(x)
-        #     if isnan(x[i])
-        #         x[i] = eps()
-        #     end
-        # end
-
-        p = sample_transform(Q)(x)
-        p.σ .= max.(p.σ, eps())
-
-        # Update Q with new values
-        set_params!(Q, p)
-
-        # Calcalute the gradient
-        g = calc_grad_elbo(Q, model, data, 10)
-        G[1] = -g[1]
-        G[2] = -g[2]
-        G[3] = -g[3]
-        G[4] = -g[4]
-
-        return G
-    end
-
-    function e(x)
-        p = sample_transform(q)(x)
-        p.σ .= max.(p.σ, eps())
-        Qt = MeanFieldGaussian(p)
-        y = -elbo(Qt, model, data)
-        return y
-    end
-
-    # nlprecon = GradientDescent(alphaguess=Optim.LineSearches.InitialStatic(alpha=1e-3,scaled=true), linesearch=Optim.LineSearches.Static())
-    # oacc10 = OACCEL(nlprecon=nlprecon, wmax=100)
-
-    init = [1., 1.1, 1.1, 1.1]
-    # res = optimize(e, calc_grad!, init, NelderMead())
-    res = optimize(e, calc_grad!, init, NelderMead())
-    println(res.minimizer)
-    println("Distribution: ", Q)
-end
-
-o()
+all_rates = [Symbol(string("λ", i)) for i in 1:L]
+# append!(all_rates, [Symbol(string("μ", i)) for i in 1:L])
+compare_methods(Q, bm, advi.logger, ch.trace, all_rates, x, 1)

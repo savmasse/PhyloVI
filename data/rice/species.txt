@@ -1,0 +1,10 @@
+Leersia_perrieri
+Oryza_brachyantha
+Oryza_punctata
+Oryza_meridionalis
+Oryza_glumaepatula
+Oryza_glaberrima
+Oryza_barthii
+Oryza_nivara
+Oryza_sativa
+Oryza_rufipogon

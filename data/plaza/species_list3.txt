@@ -1,0 +1,7 @@
+Brassica_oleracea,bol
+Amborella_trichopoda,atr
+Beta_vulgaris,bvu
+Arabidopsis_thaliana,ath
+Brassica_rapa,bra
+Arabidopsis_lyrata,aly
+Actinidia_chinensis,ach

@@ -71,6 +71,10 @@ function getL(q::FullRankGaussian)
     return L
 end
 
+function chain_factor(q::FullRankGaussian)
+    N = length(q)
+    return LinearAlgebra.I(N)
+end
 
 #===============================================================================
                     ELBO type definition and functions
