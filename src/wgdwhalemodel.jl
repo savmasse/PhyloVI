@@ -25,7 +25,7 @@ function (model::WGDWhaleModel)(nt::NamedTuple)
         #         η = nt.η        )
 
         t = typeof(model.model.params)
-        pp = properties(model.model.params).names
+        pp = propertynames(model.model.params)
         v = []
         for prop in pp
                 if hasproperty(nt, prop)
@@ -43,7 +43,7 @@ end
 
 function (model::WGDWhaleModel)(x::AbstractVector{T}) where T<:Real
         m = model.model.params
-        pp = properties(m).names
+        pp = propertynames(m)
         s = []
         v = []
         i = 0
